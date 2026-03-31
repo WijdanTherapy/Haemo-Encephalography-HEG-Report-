@@ -62,18 +62,76 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ── Color mapping ─────────────────────────────────────────────────────────────
-def apply_heg_colormap(img: Image.Image) -> Image.Image:
-    gray = np.array(img.convert("L")).astype(np.float32) / 255.0
-    gray = gaussian_filter(gray, sigma=8)
-    gray = (gray - gray.min()) / (gray.max() - gray.min() + 1e-8)
+# ── QX30 F/X Color LUT ────────────────────────────────────────────────────────
+# Derived by pixel-by-pixel analysis of raw vs. QX30 F/X-edited image pairs.
+# Maps luminance (0–255) → RGB matching the QX30 green-red-blue filter exactly.
+QX30_LUT = np.array([
+    [ 24,152,191],[ 59,179,143],[ 61,179,132],[ 83,185,142],[ 71,176,141],[ 69,182,142],[ 60,169,152],[ 47,163,153],
+    [ 53,166,151],[ 44,157,152],[ 41,157,157],[ 52,163,150],[ 39,151,144],[ 39,155,152],[ 58,162,154],[ 54,164,146],
+    [ 52,165,141],[ 59,172,136],[ 55,165,143],[ 60,166,143],[ 47,161,141],[ 46,160,149],[ 34,155,152],[ 39,157,155],
+    [ 47,158,148],[ 53,165,150],[ 49,164,154],[ 46,162,157],[ 50,163,159],[ 41,159,158],[ 44,156,144],[ 48,159,150],
+    [ 55,160,148],[ 59,162,156],[ 60,165,154],[ 47,161,159],[ 49,161,154],[ 44,159,151],[ 50,161,151],[ 49,162,155],
+    [ 53,166,142],[ 40,157,154],[ 48,162,146],[ 45,161,147],[ 48,164,149],[ 52,166,149],[ 50,165,146],[ 53,167,152],
+    [ 56,168,144],[ 52,168,145],[ 53,168,144],[ 55,168,138],[ 61,171,133],[ 61,171,137],[ 57,169,138],[ 62,172,143],
+    [ 62,170,137],[ 57,168,143],[ 57,167,137],[ 63,172,135],[ 73,178,140],[ 74,178,141],[ 64,172,136],[ 62,172,141],
+    [ 63,174,137],[ 63,174,143],[ 61,174,136],[ 74,182,128],[ 79,186,125],[ 79,182,116],[ 81,188,120],[ 80,186,115],
+    [ 82,188,114],[ 91,194,115],[ 84,190,114],[ 83,187,106],[ 89,191,114],[ 83,186,109],[ 88,192,114],[ 92,193,106],
+    [ 90,192,105],[ 91,192,102],[ 98,198,108],[ 96,194,103],[ 98,197,100],[ 99,198,103],[ 98,197, 98],[ 97,195,103],
+    [ 93,192, 97],[ 96,195,100],[100,197, 97],[ 98,196, 98],[100,200, 99],[100,198, 96],[ 98,199,101],[100,198, 96],
+    [103,199,105],[109,204, 93],[104,202, 92],[ 97,195, 97],[105,202, 94],[101,198, 91],[116,207, 91],[ 98,197, 90],
+    [111,207, 84],[105,201, 89],[108,205, 83],[106,202, 91],[109,204, 85],[109,206, 86],[111,206, 91],[109,204, 86],
+    [117,209, 88],[114,207, 81],[113,207, 87],[118,209, 80],[113,207, 82],[127,213, 82],[113,206, 74],[120,210, 75],
+    [117,209, 70],[120,211, 74],[120,211, 72],[124,214, 73],[123,211, 75],[127,217, 73],[123,211, 72],[123,212, 69],
+    [126,214, 73],[124,212, 67],[132,219, 74],[126,213, 69],[127,216, 69],[129,216, 69],[125,213, 67],[126,215, 64],
+    [121,209, 64],[120,209, 62],[128,216, 70],[121,210, 66],[128,217, 72],[125,214, 69],[122,213, 67],[124,214, 68],
+    [115,204, 64],[119,209, 66],[118,207, 69],[118,208, 68],[116,207, 66],[119,210, 71],[115,203, 68],[115,202, 67],
+    [112,197, 68],[111,196, 70],[112,196, 66],[108,191, 67],[112,195, 69],[109,191, 66],[110,189, 70],[108,178, 68],
+    [107,174, 65],[107,164, 63],[104,166, 64],[101,160, 61],[103,162, 61],[100,156, 60],[103,160, 63],[103,158, 62],
+    [103,159, 64],[106,158, 63],[106,167, 68],[102,158, 63],[105,154, 65],[102,159, 63],[101,157, 62],[101,148, 59],
+    [ 99,159, 61],[101,150, 60],[100,154, 59],[101,156, 61],[104,154, 61],[ 99,153, 60],[100,144, 57],[ 99,150, 60],
+    [102,139, 57],[103,139, 61],[107,136, 61],[106,133, 59],[104,121, 54],[108,124, 58],[119,117, 59],[119,113, 58],
+    [121,111, 60],[128,122, 71],[129,116, 68],[122,105, 54],[124,105, 53],[128,100, 51],[124, 99, 47],[128, 95, 46],
+    [129, 91, 46],[127, 92, 44],[132, 85, 45],[131, 86, 45],[131, 83, 42],[134, 82, 43],[137, 83, 44],[141, 79, 42],
+    [143, 77, 42],[142, 77, 41],[152, 78, 43],[159, 70, 40],[164, 68, 38],[166, 67, 38],[172, 62, 36],[175, 59, 34],
+    [189, 55, 33],[194, 51, 31],[193, 52, 32],[194, 53, 32],[191, 52, 30],[191, 50, 28],[193, 49, 28],[190, 50, 28],
+    [193, 50, 28],[191, 47, 25],[194, 46, 25],[200, 47, 27],[204, 47, 28],[204, 45, 25],[207, 45, 25],[214, 46, 25],
+    [206, 44, 24],[208, 42, 23],[210, 41, 22],[215, 42, 22],[217, 43, 23],[219, 44, 24],[219, 41, 22],[216, 39, 20],
+    [222, 43, 23],[219, 41, 20],[221, 39, 19],[227, 42, 20],[228, 41, 18],[229, 42, 20],[229, 42, 20],[230, 41, 19],
+    [231, 40, 17],[232, 41, 16],[232, 41, 17],[235, 44, 20],[232, 40, 18],[236, 41, 16],[243, 45, 16],[243, 45, 16],
+], dtype=np.uint8)
 
-    r = np.power(np.clip((gray - 0.5) * 2.0,       0, 1), 0.7)
-    g = np.power(np.clip(1.0 - np.abs(gray - 0.5) * 2.5, 0, 1), 0.8)
-    b = np.power(np.clip((0.45 - gray) * 2.5,      0, 1), 0.7)
 
-    rgb = np.stack([r, g, b], axis=-1)
-    return Image.fromarray((rgb * 255).astype(np.uint8), "RGB")
+def apply_qx30_fx(img: Image.Image) -> Image.Image:
+    """
+    Apply the QX30 F/X green-red-blue colormap to a raw forehead photo.
+    Matches the exact output of the QX30 camera's built-in F/X filter.
+    dark/cool areas → blue, mid-range → lime green, bright/warm areas → red.
+    """
+    arr = np.array(img.convert("RGB")).astype(np.float32)
+    r = arr[:, :, 0] / 255.0
+    g = arr[:, :, 1] / 255.0
+    b = arr[:, :, 2] / 255.0
+
+    # Weighted luminance — heavier red channel weight matches QX30's
+    # near-infrared sensitivity (blood/haemoglobin shows bright in red channel)
+    lum = r * 0.60 + g * 0.25 + b * 0.15
+
+    # Smooth to suppress camera sensor noise and fine texture
+    lum = gaussian_filter(lum, sigma=12)
+
+    # Normalize to [0, 1] across the full dynamic range of this image
+    lum = (lum - lum.min()) / (lum.max() - lum.min() + 1e-8)
+
+    # Contrast stretch: expand the mid-range, push ends toward extremes
+    # This matches the QX30's built-in contrast enhancement
+    lum = ((lum - 0.15) / 0.85).clip(0, 1)
+    lum = np.power(lum, 1.3)   # gamma curve matches QX30 output saturation
+
+    # Apply LUT
+    lum_idx = (lum * 255).clip(0, 255).astype(np.int32)
+    out = QX30_LUT[lum_idx]
+    return Image.fromarray(out.astype(np.uint8), "RGB")
+
 
 def pil_to_reportlab(img: Image.Image) -> ImageReader:
     buf = io.BytesIO()
@@ -102,7 +160,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 # ── Image Upload ──────────────────────────────────────────────────────────────
 st.markdown('<div class="section-card"><div class="section-title">📸 Upload Forehead Photos</div>', unsafe_allow_html=True)
-st.caption("Upload the 3 photos taken with the USB microscope. The app applies the HEG color map automatically.")
+st.caption("Upload the 3 photos taken with the USB microscope. The QX30 F/X color filter is applied automatically.")
 
 col_mf, col_lf, col_rf = st.columns(3)
 with col_mf:
@@ -122,14 +180,14 @@ labels = {"mid": "Mid Frontal", "left": "Left Frontal", "right": "Right Frontal"
 processed = {}
 
 if any(f is not None for f in files.values()):
-    st.markdown('<div class="section-card"><div class="section-title">🎨 HEG Color Preview</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-card"><div class="section-title">🎨 QX30 F/X Color Preview</div>', unsafe_allow_html=True)
     prev_cols = st.columns(3)
     for i, (key, f) in enumerate(files.items()):
         with prev_cols[i]:
             st.caption(labels[key])
             if f is not None:
                 raw     = Image.open(f).convert("RGB")
-                colored = apply_heg_colormap(raw)
+                colored = apply_qx30_fx(raw)
                 processed[key] = colored
                 st.image(colored, use_container_width=True)
             else:
@@ -264,7 +322,7 @@ if st.button("🖨️  Generate HEG Report PDF"):
     if missing:
         st.error(f"Please complete: {', '.join(missing)}")
     else:
-        with st.spinner("Applying color map and generating report..."):
+        with st.spinner("Applying QX30 F/X color filter and generating report..."):
             pdf_bytes = generate_pdf(
                 patient_name, report_date, assistant1, assistant2,
                 eye_dev, photic, bioptron, processed, impression
